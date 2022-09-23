@@ -14,7 +14,7 @@ use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
     bounding_box::BoundingBox, convex_hull::monotone_chain, io, partition::PartitionID,
-    space_filling_curve::zorder_cmp,
+    space_filling_curve::zorder_cmp, geometry::primitives::FPCoordinate,
 };
 
 use crate::deserialize::binary_partition_file;
@@ -78,6 +78,20 @@ pub fn main() {
         serialize_convex_cell_hull_geojson(&hulls, &args.convex_cells_geojson);
     }
 
+    if !args.boundary_nodes_geojson.is_empty() {
+        info!("computing geometry of boundary nodes");
+        let edges = io::read_graph_into_trivial_edges(&args.graph);
+        info!("loaded {} edges", edges.len());
+        let boundary_coordinates = edges
+            .iter()
+            .filter(|edge| partition_ids[edge.source] != partition_ids[edge.target])
+            .map(|edge| coordinates[edge.source])
+            .collect_vec();
+        info!("detection {} boundary nodes", boundary_coordinates.len());
+
+        serialize_boundary_geometry_geojson(&boundary_coordinates, &args.boundary_nodes_geojson);
+    }
+
     // generate bounding boxes
     //  - serialize list of boxes as geojson
     // sort vector of boxes along space filling curve
@@ -90,7 +104,7 @@ pub fn main() {
 
 fn serialize_convex_cell_hull_geojson(
     hulls: &[(
-        Vec<toolbox_rs::geometry::primitives::FPCoordinate>,
+        Vec<FPCoordinate>,
         BoundingBox,
         &PartitionID,
     )],
@@ -123,6 +137,30 @@ fn serialize_convex_cell_hull_geojson(
                 foreign_members: None,
             })
             .unwrap_or_else(|_| panic!("error writing feature: {}", id));
+    }
+    writer.finish().expect("error writing file");
+}
+
+fn serialize_boundary_geometry_geojson(
+    coordinates: &[FPCoordinate],
+    filename: &str,
+) {
+    let file = BufWriter::new(File::create(filename).expect("output file cannot be opened"));
+    let mut writer = FeatureWriter::from_writer(file);
+    for coordinate in coordinates {
+        // serialize convex hull polygons as geojson
+        let geometry = Geometry::new(Value::Point(coordinate.to_lon_lat_vec()));
+
+        writer
+            .write_feature(&Feature {
+                bbox: None,
+                geometry: Some(geometry),
+                id: None,
+                // Features tbd
+                properties: None,
+                foreign_members: None,
+            })
+            .unwrap_or_else(|_| panic!("error writing feature: {}", coordinate));
     }
     writer.finish().expect("error writing file");
 }
