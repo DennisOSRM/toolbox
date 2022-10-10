@@ -13,8 +13,8 @@ use geojson::{feature::Id, Feature, FeatureWriter, Geometry, Value};
 use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
-    bounding_box::BoundingBox, convex_hull::monotone_chain, io, partition::PartitionID,
-    space_filling_curve::zorder_cmp, geometry::primitives::FPCoordinate,
+    bounding_box::BoundingBox, convex_hull::monotone_chain, geometry::primitives::FPCoordinate, io,
+    partition::PartitionID, space_filling_curve::zorder_cmp, one_iterator::OneIter,
 };
 
 use crate::deserialize::binary_partition_file;
@@ -30,6 +30,7 @@ pub fn main() {
     println!(r#"  |___/   \__|_  \__,_|   _|_|_   _|_|_   \___/   _|_|_  \__,_|"#);
     println!(r#"_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|"#);
     println!(r#""`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"#);
+    println!("build from revision: {}", env!("GIT_HASH"));
 
     // parse and print command line parameters
     let args = <Arguments as clap::Parser>::parse();
@@ -92,22 +93,19 @@ pub fn main() {
         serialize_boundary_geometry_geojson(&boundary_coordinates, &args.boundary_nodes_geojson);
     }
 
-    // generate bounding boxes
-    //  - serialize list of boxes as geojson
-    // sort vector of boxes along space filling curve
-    // construct
-    // sort proxy vector
-    // remove duplicates from proxy vector
-    // copy unique ids and their rank to
+    // parse level information from integer representation
+    info!("decoded level definition: {}", args.level_definition.one_iter().format(" "));
+
+    // TODO: any assertions on the levels possible
+    // instantiate graph, extract sub graphs, process cells
+
+
+
     info!("done.");
 }
 
 fn serialize_convex_cell_hull_geojson(
-    hulls: &[(
-        Vec<FPCoordinate>,
-        BoundingBox,
-        &PartitionID,
-    )],
+    hulls: &[(Vec<FPCoordinate>, BoundingBox, &PartitionID)],
     filename: &str,
 ) {
     let file = BufWriter::new(File::create(filename).expect("output file cannot be opened"));
@@ -141,10 +139,7 @@ fn serialize_convex_cell_hull_geojson(
     writer.finish().expect("error writing file");
 }
 
-fn serialize_boundary_geometry_geojson(
-    coordinates: &[FPCoordinate],
-    filename: &str,
-) {
+fn serialize_boundary_geometry_geojson(coordinates: &[FPCoordinate], filename: &str) {
     let file = BufWriter::new(File::create(filename).expect("output file cannot be opened"));
     let mut writer = FeatureWriter::from_writer(file);
     for coordinate in coordinates {

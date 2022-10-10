@@ -14,14 +14,15 @@ pub struct Arguments {
     /// input graph file
     #[clap(short, long, action)]
     pub graph: String,
+    /// input level integer
+    #[clap(short, long, action)]
+    pub level_definition: u32,
 
     /// output convex hull cell geometry
     #[clap(long, action, default_value_t = String::new())]
-    // TODO: make optional
     pub convex_cells_geojson: String,
     /// output boundary node locations
-    #[clap(long, action, default_value_t = String::new())] 
-    // TODO: make optional
+    #[clap(long, action, default_value_t = String::new())]
     pub boundary_nodes_geojson: String,
 }
 
@@ -30,6 +31,8 @@ impl Display for Arguments {
         writeln!(f, "command line arguments:")?;
         writeln!(f, "partition_file: {}", self.partition_file)?;
         writeln!(f, "coordinates_file: {}", self.coordinates_file)?;
+        writeln!(f, "graph: {}", self.graph)?;
+        writeln!(f, "level_definition: {}", self.level_definition)?;
         writeln!(f, "convex_cells_geojson: {}", self.convex_cells_geojson)?;
         writeln!(f, "boundary_nodes_geojson: {}", self.boundary_nodes_geojson)
     }
