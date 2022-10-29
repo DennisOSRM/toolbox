@@ -14,7 +14,7 @@ use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
     bounding_box::BoundingBox, convex_hull::monotone_chain, geometry::primitives::FPCoordinate, io,
-    partition::PartitionID, space_filling_curve::zorder_cmp, one_iterator::OneIter,
+    one_iterator::OneIter, partition::PartitionID, space_filling_curve::zorder_cmp,
 };
 
 use crate::deserialize::binary_partition_file;
@@ -30,7 +30,7 @@ pub fn main() {
     println!(r#"  |___/   \__|_  \__,_|   _|_|_   _|_|_   \___/   _|_|_  \__,_|"#);
     println!(r#"_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|"#);
     println!(r#""`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"#);
-    println!("build from revision: {}", env!("GIT_HASH"));
+    println!("build: {}", env!("GIT_HASH"));
 
     // parse and print command line parameters
     let args = <Arguments as clap::Parser>::parse();
@@ -94,12 +94,13 @@ pub fn main() {
     }
 
     // parse level information from integer representation
-    info!("decoded level definition: {}", args.level_definition.one_iter().format(" "));
+    info!(
+        "decoded level definition: [{}]",
+        args.level_definition.one_iter().format(", ")
+    );
 
     // TODO: any assertions on the levels possible
     // instantiate graph, extract sub graphs, process cells
-
-
 
     info!("done.");
 }
