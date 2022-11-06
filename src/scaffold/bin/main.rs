@@ -110,8 +110,9 @@ pub fn main() {
         graph.number_of_edges()
     );
 
-    // TODO: extract sub graphs, process cells
     info!("creating all BaseCells");
+    // extract subgraphs
+    // TODO: can this be done in a faster way without a hash map?
     let mut cells: HashMap<PartitionID, BaseCell> = HashMap::with_capacity(proxy_vector.len());
     for s in graph.node_range() {
         for edge in graph.edge_range(s) {
@@ -130,17 +131,26 @@ pub fn main() {
                 // sketch of two cells with a crossing directed edge
                 //  ..________   ________..
                 //           |   |
-                //         ~~s-->t~~          i.outgoing_nodes.push(s)
+                //         ~~s-->t~~          i.outgoing_nodes.push(t)
                 //    cell i |   | cell k     k.incoming_nodes.push(t)
                 //  .._______|   |_______..
 
                 // incoming and outgoing ids in source, target cells
-                cells.entry(source_id).or_default().outgoing_nodes.push(s);
+                cells.entry(source_id).or_default().outgoing_nodes.push(t);
                 cells.entry(target_id).or_default().incoming_nodes.push(t);
             }
         }
     }
     info!("created {} base cells", cells.len());
+
+    // process cells
+    cells.iter_mut().for_each(|(key, cell)| {
+        println!("processing cell {}", key);
+        cell.process();
+    });
+    info!("done processing base cells.");
+
+    // TODO: process matrix layers
 
     info!("done.");
 }
