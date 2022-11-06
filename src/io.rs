@@ -22,7 +22,7 @@ where
 pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
     let reader = BufReader::new(File::open(filename).unwrap());
 
-    let input_edges: Vec<InputEdge<i32>> = deserialize_from(reader).unwrap();
+    let input_edges: Vec<InputEdge<usize>> = deserialize_from(reader).unwrap();
     let edges = input_edges
         .iter()
         .map(|edge| TrivialEdge {
