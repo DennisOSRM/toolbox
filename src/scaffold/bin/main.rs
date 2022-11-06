@@ -56,26 +56,26 @@ pub fn main() {
     proxy_vector.sort();
     info!("number of unique cell ids is {}", proxy_vector.len());
 
-    info!("generating convex hulls");
-    let mut cells: HashMap<PartitionID, Vec<usize>> = HashMap::new();
-    for (i, partition_id) in partition_ids.iter().enumerate() {
-        if !cells.contains_key(partition_id) {
-            cells.insert(*partition_id, Vec::new());
-        }
-        cells.get_mut(partition_id).unwrap().push(i);
-    }
-    let mut hulls = cells
-        .iter()
-        .map(|(id, indexes)| {
-            let cell_coordinates = indexes.iter().map(|i| coordinates[*i]).collect_vec();
-            let convex_hull = monotone_chain(&cell_coordinates);
-            let bbox = BoundingBox::from_coordinates(&convex_hull);
-
-            (convex_hull, bbox, id)
-        })
-        .collect_vec();
-
     if !args.convex_cells_geojson.is_empty() {
+        info!("generating convex hulls");
+        let mut cells: HashMap<PartitionID, Vec<usize>> = HashMap::new();
+        for (i, partition_id) in partition_ids.iter().enumerate() {
+            if !cells.contains_key(partition_id) {
+                cells.insert(*partition_id, Vec::new());
+            }
+            cells.get_mut(partition_id).unwrap().push(i);
+        }
+        let mut hulls = cells
+            .iter()
+            .map(|(id, indexes)| {
+                let cell_coordinates = indexes.iter().map(|i| coordinates[*i]).collect_vec();
+                let convex_hull = monotone_chain(&cell_coordinates);
+                let bbox = BoundingBox::from_coordinates(&convex_hull);
+
+                (convex_hull, bbox, id)
+            })
+            .collect_vec();
+
         info!("sorting convex cell hulls by Z-order");
         hulls.sort_by(|a, b| zorder_cmp(a.1.center(), b.1.center()));
         info!("writing to {}", &args.convex_cells_geojson);
