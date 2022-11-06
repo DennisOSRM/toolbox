@@ -9,13 +9,26 @@ use crate::{
 };
 
 pub struct BaseCell {
-    incoming_nodes: Vec<NodeID>,
-    outgoing_nodes: Vec<NodeID>,
-    edges: Vec<InputEdge<usize>>,
+    pub incoming_nodes: Vec<NodeID>,
+    pub outgoing_nodes: Vec<NodeID>,
+    pub edges: Vec<InputEdge<usize>>,
     // TODO: add renumbering table to support unpacking edges
+}
+impl Default for BaseCell {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BaseCell {
+    pub fn new() -> Self {
+        BaseCell {
+            incoming_nodes: Vec::new(),
+            outgoing_nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+
     pub fn process(&self) -> MatrixCell {
         // renumber nodes to be in contiguous range"
         // [sources..targets..other nodes]
@@ -208,8 +221,8 @@ mod tests {
         assert_eq!(outgoing_nodes, matrix_cell.outgoing_nodes);
         assert_eq!(matrix_cell.matrix, vec![13, 15, 10, 12]);
 
-        assert_eq!(matrix_cell.get_distance_row(0), vec![11, 15]);
-        assert_eq!(matrix_cell.get_distance_row(3), vec![9, 8]);
+        assert_eq!(matrix_cell.get_distance_row(0), vec![13, 15]);
+        assert_eq!(matrix_cell.get_distance_row(2), vec![10, 12]);
     }
 
     #[test]

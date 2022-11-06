@@ -1,5 +1,4 @@
 mod command_line;
-mod deserialize;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -13,11 +12,10 @@ use geojson::{feature::Id, Feature, FeatureWriter, Geometry, Value};
 use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
-    bounding_box::BoundingBox, convex_hull::monotone_chain, geometry::primitives::FPCoordinate, io,
-    one_iterator::OneIter, partition::PartitionID, space_filling_curve::zorder_cmp,
+    bounding_box::BoundingBox, convex_hull::monotone_chain, edge::InputEdge,
+    geometry::primitives::FPCoordinate, graph::Graph, io, one_iterator::OneIter,
+    partition::PartitionID, space_filling_curve::zorder_cmp, static_graph::StaticGraph, cell::BaseCell,
 };
-
-use crate::deserialize::binary_partition_file;
 
 // TODO: tool that generate all the runtime data
 
@@ -36,11 +34,14 @@ pub fn main() {
     let args = <Arguments as clap::Parser>::parse();
     info!("{args}");
 
-    let partition_ids = binary_partition_file(&args.partition_file);
-    info!("loaded {} partitions", partition_ids.len());
+    let partition_ids = io::read_vec_from_file::<PartitionID>(&args.partition_file);
+    info!("loaded {} partition ids", partition_ids.len());
 
-    let coordinates = io::read_coordinates(&args.coordinates_file);
+    let coordinates = io::read_vec_from_file::<FPCoordinate>(&args.coordinates_file);
     info!("loaded {} coordinates", coordinates.len());
+
+    let edges = io::read_vec_from_file::<InputEdge<usize>>(&args.graph);
+    info!("loaded {} edges", edges.len());
 
     info!("creating and sorting proxy vector");
     let mut known_ids = HashSet::new();
@@ -52,8 +53,10 @@ pub fn main() {
         }
     }
 
+    proxy_vector.sort();
     info!("number of unique cell ids is {}", proxy_vector.len());
 
+    info!("generating convex hulls");
     let mut cells: HashMap<PartitionID, Vec<usize>> = HashMap::new();
     for (i, partition_id) in partition_ids.iter().enumerate() {
         if !cells.contains_key(partition_id) {
@@ -81,8 +84,6 @@ pub fn main() {
 
     if !args.boundary_nodes_geojson.is_empty() {
         info!("computing geometry of boundary nodes");
-        let edges = io::read_graph_into_trivial_edges(&args.graph);
-        info!("loaded {} edges", edges.len());
         let boundary_coordinates = edges
             .iter()
             .filter(|edge| partition_ids[edge.source] != partition_ids[edge.target])
@@ -100,7 +101,41 @@ pub fn main() {
     );
 
     // TODO: any assertions on the levels possible
-    // instantiate graph, extract sub graphs, process cells
+    // instantiate graph
+    info!("building graph");
+    let graph = StaticGraph::new(edges);
+    info!(
+        "instantiated graph with {} nodes and {} edges",
+        graph.number_of_nodes(),
+        graph.number_of_edges()
+    );
+
+    // TODO: extract sub graphs, process cells
+    info!("creating all BaseCells");
+    let mut cells: HashMap<PartitionID, BaseCell> = HashMap::with_capacity(proxy_vector.len());
+    for s in graph.node_range() {
+        for edge in graph.edge_range(s) {
+            let t = graph.target(edge);
+            let source_id = partition_ids[s];
+            let target_id = partition_ids[t];
+            // edges belong to the cell of their source
+
+            cells.entry(source_id).or_default().edges.push(InputEdge::new(s, t, *graph.data(edge)));
+            if source_id != target_id { // crossing edge
+                // sketch of two cells with a crossing directed edge
+                //  ..________   ________..
+                //           |   |
+                //         ~~s-->t~~          i.outgoing_nodes.push(s)
+                //    cell i |   | cell k     k.incoming_nodes.push(t)
+                //  .._______|   |_______..
+
+                // incoming and outgoing ids in source, target cells
+                cells.entry(source_id).or_default().outgoing_nodes.push(s);
+                cells.entry(target_id).or_default().incoming_nodes.push(t);
+            }
+        }
+    }
+    info!("created {} base cells", cells.len());
 
     info!("done.");
 }

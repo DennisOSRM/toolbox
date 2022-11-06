@@ -26,6 +26,7 @@ impl<T: Ord + Clone> Default for StaticGraph<T> {
         }
     }
 }
+// TODO: EdgeIterator StaticGraph::edge_iter()
 
 impl<T: Ord + Copy> StaticGraph<T> {
     // In time O(V+E) check that the following invariants hold:
