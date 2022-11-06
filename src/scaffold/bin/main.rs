@@ -12,9 +12,9 @@ use geojson::{feature::Id, Feature, FeatureWriter, Geometry, Value};
 use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
-    bounding_box::BoundingBox, convex_hull::monotone_chain, edge::InputEdge,
+    bounding_box::BoundingBox, cell::BaseCell, convex_hull::monotone_chain, edge::InputEdge,
     geometry::primitives::FPCoordinate, graph::Graph, io, one_iterator::OneIter,
-    partition::PartitionID, space_filling_curve::zorder_cmp, static_graph::StaticGraph, cell::BaseCell,
+    partition::PartitionID, space_filling_curve::zorder_cmp, static_graph::StaticGraph,
 };
 
 // TODO: tool that generate all the runtime data
@@ -120,8 +120,13 @@ pub fn main() {
             let target_id = partition_ids[t];
             // edges belong to the cell of their source
 
-            cells.entry(source_id).or_default().edges.push(InputEdge::new(s, t, *graph.data(edge)));
-            if source_id != target_id { // crossing edge
+            cells
+                .entry(source_id)
+                .or_default()
+                .edges
+                .push(InputEdge::new(s, t, *graph.data(edge)));
+            if source_id != target_id {
+                // crossing edge
                 // sketch of two cells with a crossing directed edge
                 //  ..________   ________..
                 //           |   |
