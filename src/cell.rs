@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use log::debug;
 
 use crate::{
-    edge::InputEdge, graph::NodeID, static_graph::StaticGraph,
-    unidirectional_dijkstra::UnidirectionalDijkstra,
+    edge::InputEdge, graph::NodeID, one_to_many_dijkstra::OneToManyDijkstra,
+    static_graph::StaticGraph,
 };
 
 #[derive(Debug)]
@@ -37,30 +36,19 @@ impl BaseCell {
         // [0,1,2         ...         n-1]
 
         // println!("processing cell {:?}", self);
-        let mut seen_nodes = HashMap::new();
+        let mut seen_nodes = FxHashMap::default();
         self.incoming_nodes.iter().for_each(|node| {
+            let next_id = seen_nodes.len();
+            seen_nodes.entry(*node).or_insert(next_id);
             // println!("source {}, idx: {}", *node, seen_nodes.len());
-            let next_id = seen_nodes.len();
-            seen_nodes.entry(*node).or_insert(next_id);
         });
+        // println!("1");
         self.outgoing_nodes.iter().for_each(|node| {
-            // println!("target {}, idx: {}", *node, seen_nodes.len());
             let next_id = seen_nodes.len();
             seen_nodes.entry(*node).or_insert(next_id);
+            // println!("target {}, idx: {}", *node, seen_nodes.len());
         });
-
-        // if seen_nodes.len() != self.incoming_nodes.len() + self.outgoing_nodes.len() {
-        //     println!("seen {:?}", seen_nodes);
-        //     println!("incoming {:?}", self.incoming_nodes);
-        //     println!("outgoing {:?}", self.outgoing_nodes);
-
-        // }
-
-        // assert_eq!(
-        //     // assert incoming outgoing nodes ids have empty set intersection
-        //     seen_nodes.len(),
-        //     self.incoming_nodes.len() + self.outgoing_nodes.len()
-        // );
+        // println!("2");
 
         let new_edges = self
             .edges
@@ -83,17 +71,21 @@ impl BaseCell {
 
         // instantiate subgraph
         let graph = StaticGraph::new(new_edges);
-        let mut dijkstra = UnidirectionalDijkstra::new();
+        let mut dijkstra = OneToManyDijkstra::new();
         let mut matrix = vec![usize::MAX; self.incoming_nodes.len() * self.outgoing_nodes.len()];
 
         let source_range = 0..self.incoming_nodes.len();
+        let target_range = (self.incoming_nodes.len()
+            ..self.incoming_nodes.len() + self.outgoing_nodes.len())
+            .into_iter()
+            .collect_vec();
+        // println!("3, graph: ({},{})", graph.number_of_nodes(), graph.number_of_edges());
         for source in source_range {
             // TODO: compute clique information by one-to-many or many-to-many
-            let target_range =
-                self.incoming_nodes.len()..self.incoming_nodes.len() + self.outgoing_nodes.len();
-            for target in target_range {
-                println!("process {source} -> {target}");
-                let distance = dijkstra.run(&graph, source, target);
+            let _success = dijkstra.run(&graph, source, &target_range);
+            for target in &target_range {
+                let distance = dijkstra.distance(*target);
+                // println!("process {source} -> {target}");
                 debug!(
                     "matrix[{}] distance({source},{target})={distance}",
                     (source * self.outgoing_nodes.len() + target - self.incoming_nodes.len())
@@ -103,6 +95,7 @@ impl BaseCell {
                     distance;
             }
         }
+        // println!("4");
 
         // return MatrixCell
         MatrixCell {
@@ -267,7 +260,8 @@ mod tests {
     }
 
     #[test]
-    fn example1() {
+    fn dimacs_extract() {
+        // regression test from handling DIMACS data set
         let incoming_nodes = vec![
             9425886, 8380081, 9425867, 8380040, 8380040, 9425848, 8380040, 9425887, 9425899,
             9425952, 10105412, 10105432, 9425958, 8380092,

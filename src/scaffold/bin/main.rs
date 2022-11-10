@@ -1,20 +1,17 @@
 mod command_line;
 
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    io::BufWriter,
-};
+use std::{collections::HashSet, fs::File, io::BufWriter};
 
 use command_line::Arguments;
 use env_logger::{Builder, Env};
+use fxhash::FxHashMap;
 use geojson::{feature::Id, Feature, FeatureWriter, Geometry, Value};
 use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
     bounding_box::BoundingBox, cell::BaseCell, convex_hull::monotone_chain, edge::InputEdge,
-    geometry::primitives::FPCoordinate, graph::Graph, io, one_iterator::OneIter,
-    partition::PartitionID, space_filling_curve::zorder_cmp, static_graph::StaticGraph,
+    geometry::primitives::FPCoordinate, io, one_iterator::OneIter, partition::PartitionID,
+    space_filling_curve::zorder_cmp,
 };
 
 // TODO: tool that generate all the runtime data
@@ -58,7 +55,7 @@ pub fn main() {
 
     if !args.convex_cells_geojson.is_empty() {
         info!("generating convex hulls");
-        let mut cells: HashMap<PartitionID, Vec<usize>> = HashMap::new();
+        let mut cells: FxHashMap<PartitionID, Vec<usize>> = FxHashMap::default();
         for (i, partition_id) in partition_ids.iter().enumerate() {
             if !cells.contains_key(partition_id) {
                 cells.insert(*partition_id, Vec::new());
@@ -100,55 +97,48 @@ pub fn main() {
         args.level_definition.one_iter().format(", ")
     );
 
-    // TODO: any assertions on the levels possible
-    // instantiate graph
-    info!("building graph");
-    let graph = StaticGraph::new(edges);
-    info!(
-        "instantiated graph with {} nodes and {} edges",
-        graph.number_of_nodes(),
-        graph.number_of_edges()
-    );
-
     info!("creating all BaseCells");
     // extract subgraphs
     // TODO: can this be done in a faster way without a hash map?
-    let mut cells: HashMap<PartitionID, BaseCell> = HashMap::with_capacity(proxy_vector.len());
-    for s in graph.node_range() {
-        for edge in graph.edge_range(s) {
-            let t = graph.target(edge);
-            let source_id = partition_ids[s];
-            let target_id = partition_ids[t];
-            // edges belong to the cell of their source
+    let mut cells: FxHashMap<PartitionID, BaseCell> = FxHashMap::default();
+    for edge in edges {
+        let s = edge.source;
+        let t = edge.target;
+        let source_id = partition_ids[s];
+        let target_id = partition_ids[t];
+        // edges belong to the cell of their source
 
-            cells
-                .entry(source_id)
-                .or_default()
-                .edges
-                .push(InputEdge::new(s, t, *graph.data(edge)));
-            if source_id != target_id {
-                // crossing edge
-                // sketch of two cells with a crossing directed edge
-                //  ..________   ________..
-                //           |   |
-                //         ~~s-->t~~          i.outgoing_nodes.push(t)
-                //    cell i |   | cell k     k.incoming_nodes.push(t)
-                //  .._______|   |_______..
+        cells.entry(source_id).or_default().edges.push(edge);
+        if source_id != target_id {
+            // crossing edge
+            // sketch of two cells with a crossing directed edge
+            //  ..________   ________..
+            //           |   |
+            //         ~~s-->t~~          i.outgoing_nodes.push(t)
+            //    cell i |   | cell k     k.incoming_nodes.push(t)
+            //  .._______|   |_______..
 
-                // incoming and outgoing ids in source, target cells
-                cells.entry(source_id).or_default().outgoing_nodes.push(t);
-                cells.entry(target_id).or_default().incoming_nodes.push(t);
-            }
+            // incoming and outgoing ids in source, target cells
+            cells.entry(source_id).or_default().outgoing_nodes.push(t);
+            cells.entry(target_id).or_default().incoming_nodes.push(t);
         }
     }
     info!("created {} base cells", cells.len());
 
     // process cells
-    cells.iter_mut().for_each(|(key, cell)| {
-        println!("processing cell {}", key);
-        cell.process();
-    });
-    info!("done processing base cells.");
+    let matrices = cells
+        .iter()
+        .map(|(key, cell)| {
+            // println!("processing cell {}", key);
+            (key, cell.process())
+        })
+        .collect_vec();
+
+    // if let Some(cell) = cells.get(&PartitionID::new(1978734)) {
+    //     cell.process();
+    // }
+
+    info!("done processing {} base cells.", matrices.len());
 
     // TODO: process matrix layers
 

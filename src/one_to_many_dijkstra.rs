@@ -1,4 +1,4 @@
-/// Implementation of a unidirectional Dijkstra that uses the adresseable heap
+/// Implementation of a one-to-many Dijkstra that uses the adresseable heap
 /// as its priority queue.
 ///
 /// The main advantage of this implementation is that it stores the entire
@@ -11,30 +11,30 @@ use crate::{
 
 use log::debug;
 
-pub struct UnidirectionalDijkstra {
+pub struct OneToManyDijkstra {
     queue: AddressableHeap<NodeID, usize, NodeID>,
-    upper_bound: usize,
+    reached_target_count: usize,
 }
 
-impl Default for UnidirectionalDijkstra {
+impl Default for OneToManyDijkstra {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UnidirectionalDijkstra {
+impl OneToManyDijkstra {
     pub fn new() -> Self {
         let queue = AddressableHeap::<NodeID, usize, NodeID>::new();
         Self {
             queue,
-            upper_bound: usize::MAX,
+            reached_target_count: 0,
         }
     }
 
     /// clears the search space stored in the queue.
     pub fn clear(&mut self) {
         self.queue.clear();
-        self.upper_bound = usize::MAX;
+        self.reached_target_count = 0;
     }
 
     /// retrieves the number of nodes that were explored (not settled) during
@@ -43,21 +43,26 @@ impl UnidirectionalDijkstra {
         self.queue.inserted_len()
     }
 
+    /// return the last known distance of a node from a queue
+    pub fn distance(&self, node: NodeID) -> usize {
+        self.queue.weight(node)
+    }
+
     /// run a path computation from s to t on some graph. The object is reusable
     /// to run consecutive searches, even on different graphs. It is cleared on
     /// every run, which saves on allocations.
-    pub fn run<G: Graph<usize>>(&mut self, graph: &G, s: NodeID, t: NodeID) -> usize {
+    pub fn run<G: Graph<usize>>(&mut self, graph: &G, source: NodeID, targets: &[NodeID]) -> bool {
         // clear the search space
         self.clear();
 
-        debug!("[start] source: {s}, target: {t}");
+        debug!("[start] sources: {:?}, targets: {:?}", source, targets);
 
         // prime queue
-        self.queue.insert(s, 0, s);
-        debug!("[push] {s} at distance {}", self.queue.weight(s));
+        self.queue.insert(source, 0, source);
+        debug!("[push] {source} at distance {}", self.queue.weight(source));
 
         // iteratively search the graph
-        while !self.queue.is_empty() && self.upper_bound == usize::MAX {
+        while !self.queue.is_empty() && self.reached_target_count < targets.len() {
             // settle next node from queue
             let u = self.queue.delete_min();
             let distance = self.queue.weight(u);
@@ -65,10 +70,9 @@ impl UnidirectionalDijkstra {
             debug!("[pop] {u} at distance {distance}");
 
             // check if target is reached
-            if u == t {
-                self.upper_bound = distance;
-                debug!("[done] reached {t} at {distance}");
-                return self.upper_bound;
+            if targets.contains(&u) {
+                self.reached_target_count += 1;
+                debug!("[done] reached {u} at {distance}");
             }
 
             // relax outgoing edges
@@ -90,14 +94,14 @@ impl UnidirectionalDijkstra {
             }
         }
 
-        self.upper_bound
+        self.reached_target_count == targets.len()
     }
 
     /// retrieve path from the node to the queue according to the search space
     /// stored in the priority queue. It's stored in reverse node order (from
     /// target to source) and thus reversed before returning.
     pub fn retrieve_node_path(&self, target: NodeID) -> Option<Vec<NodeID>> {
-        if self.upper_bound == usize::MAX || !self.queue.inserted(target) {
+        if !self.queue.inserted(target) {
             // if no path was found or target was not reached, return None
             return None;
         }
@@ -123,8 +127,8 @@ impl UnidirectionalDijkstra {
 #[cfg(test)]
 mod tests {
     use crate::{
-        edge::InputEdge, graph::Graph, static_graph::StaticGraph,
-        unidirectional_dijkstra::UnidirectionalDijkstra,
+        edge::InputEdge, graph::Graph, one_to_many_dijkstra::OneToManyDijkstra,
+        static_graph::StaticGraph,
     };
 
     fn create_graph() -> StaticGraph<usize> {
@@ -149,10 +153,11 @@ mod tests {
     fn simple_graph() {
         let graph = create_graph();
 
-        let mut dijkstra = UnidirectionalDijkstra::new();
-        let distance = dijkstra.run(&graph, 0, 3);
+        let mut dijkstra = OneToManyDijkstra::new();
+        let success = dijkstra.run(&graph, 0, &[3]);
+        assert!(success);
         assert_eq!(6, dijkstra.search_space_len());
-        assert_eq!(9, distance);
+        assert_eq!(9, dijkstra.distance(3));
     }
 
     #[test]
@@ -170,11 +175,12 @@ mod tests {
             [no, no, no, 7, no, 0],
         ];
 
-        let mut dijkstra = UnidirectionalDijkstra::new();
+        let mut dijkstra = OneToManyDijkstra::new();
         for i in 0..6 {
+            let success = dijkstra.run(&graph, i, &[0, 1, 2, 3, 4, 5]);
+            assert_eq!(success, !results_table[i].iter().any(|x| { *x == no })); // find any
             for j in 0..6 {
-                let distance = dijkstra.run(&graph, i, j);
-                assert_eq!(results_table[i][j], distance);
+                assert_eq!(results_table[i][j], dijkstra.distance(j));
             }
         }
     }
@@ -182,9 +188,10 @@ mod tests {
     #[test]
     fn retrieve_node_path() {
         let graph = create_graph();
-        let mut dijkstra = UnidirectionalDijkstra::new();
-        let distance = dijkstra.run(&graph, 0, 3);
-        assert_eq!(9, distance);
+        let mut dijkstra = OneToManyDijkstra::new();
+        let success = dijkstra.run(&graph, 0, &[3]);
+        assert!(success);
+        assert_eq!(9, dijkstra.distance(3));
         let computed_path = dijkstra.retrieve_node_path(3).unwrap();
         let expected_path = vec![0, 4, 2, 3];
 
@@ -205,9 +212,10 @@ mod tests {
         ];
         let graph = StaticGraph::new(edges);
 
-        let mut dijkstra = UnidirectionalDijkstra::new();
-        let distance = dijkstra.run(&graph, 0, 5);
-        assert_eq!(distance, 15);
+        let mut dijkstra = OneToManyDijkstra::new();
+        let success = dijkstra.run(&graph, 0, &[5]);
+        assert!(success);
+        assert_eq!(dijkstra.distance(5), 15);
     }
 
     #[test]
@@ -391,8 +399,9 @@ mod tests {
         ];
         let graph = StaticGraph::new(edges);
 
-        let mut dijkstra = UnidirectionalDijkstra::new();
-        let distance = dijkstra.run(&graph, 1, 19);
-        assert_eq!(distance, 21109);
+        let mut dijkstra = OneToManyDijkstra::new();
+        let success = dijkstra.run(&graph, 1, &[19]);
+        assert!(success);
+        assert_eq!(dijkstra.distance(19), 21109);
     }
 }
