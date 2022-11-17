@@ -1,20 +1,19 @@
 mod command_line;
-
-use std::{collections::HashSet, fs::File, io::BufWriter};
+mod serialize;
 
 use command_line::Arguments;
 use env_logger::{Builder, Env};
-use fxhash::FxHashMap;
-use geojson::{feature::Id, Feature, FeatureWriter, Geometry, Value};
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use log::info;
+use log::{error, info};
+use rayon::prelude::*;
 use toolbox_rs::{
     bounding_box::BoundingBox, cell::BaseCell, convex_hull::monotone_chain, edge::InputEdge,
-    geometry::primitives::FPCoordinate, io, one_iterator::OneIter, partition::PartitionID,
-    space_filling_curve::zorder_cmp,
+    geometry::primitives::FPCoordinate, io, level_directory::LevelDirectory, one_iterator::OneIter,
+    partition::PartitionID, space_filling_curve::zorder_cmp,
 };
 
-// TODO: tool that generate all the runtime data
+// TODO: tool to generate all the runtime data
 
 pub fn main() {
     Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -41,7 +40,7 @@ pub fn main() {
     info!("loaded {} edges", edges.len());
 
     info!("creating and sorting proxy vector");
-    let mut known_ids = HashSet::new();
+    let mut known_ids = FxHashSet::default();
     let mut proxy_vector = Vec::new();
     for (i, partition_id) in partition_ids.iter().enumerate() {
         if !known_ids.contains(partition_id) {
@@ -62,8 +61,8 @@ pub fn main() {
             }
             cells.get_mut(partition_id).unwrap().push(i);
         }
-        let mut hulls = cells
-            .iter()
+        let mut hulls: Vec<_> = cells
+            .par_iter()
             .map(|(id, indexes)| {
                 let cell_coordinates = indexes.iter().map(|i| coordinates[*i]).collect_vec();
                 let convex_hull = monotone_chain(&cell_coordinates);
@@ -71,12 +70,12 @@ pub fn main() {
 
                 (convex_hull, bbox, id)
             })
-            .collect_vec();
+            .collect();
 
         info!("sorting convex cell hulls by Z-order");
         hulls.sort_by(|a, b| zorder_cmp(a.1.center(), b.1.center()));
         info!("writing to {}", &args.convex_cells_geojson);
-        serialize_convex_cell_hull_geojson(&hulls, &args.convex_cells_geojson);
+        serialize::convex_cell_hull_geojson(&hulls, &args.convex_cells_geojson);
     }
 
     if !args.boundary_nodes_geojson.is_empty() {
@@ -88,115 +87,203 @@ pub fn main() {
             .collect_vec();
         info!("detection {} boundary nodes", boundary_coordinates.len());
 
-        serialize_boundary_geometry_geojson(&boundary_coordinates, &args.boundary_nodes_geojson);
+        serialize::boundary_geometry_geojson(&boundary_coordinates, &args.boundary_nodes_geojson);
     }
 
-    // parse level information from integer representation
+    // parse level information from integer representation, level 0 is implicit
+    let mut levels = args.level_definition.one_iter().collect_vec();
+    levels.push(0);
+    levels.sort();
+    let levels = levels;
+    if levels.len() > 6 {
+        error!("number of levels > 6");
+    }
+
     info!(
-        "decoded level definition: [{}]",
-        args.level_definition.one_iter().format(", ")
+        "decoded matrix level definition: [{:?}]",
+        levels.iter().format(", ")
     );
 
-    info!("creating all BaseCells");
+    let max_level = *levels.iter().max().unwrap();
+    for id in &partition_ids {
+        debug_assert!(id.level() as u32 <= max_level);
+    }
+
+    info!("instantiate level directory");
+    let level_directory = LevelDirectory::new(&partition_ids, &levels);
+
+    info!("creating base cells on level 0 and boundary nodes on all levels");
     // extract subgraphs
-    // TODO: can this be done in a faster way without a hash map?
-    let mut cells: FxHashMap<PartitionID, BaseCell> = FxHashMap::default();
+    let mut cells = Vec::new();
+    cells.resize(levels.len(), FxHashMap::<PartitionID, BaseCell>::default());
+    // TODO: can this be done in a faster way without a hash map, perhaps in parallel?
+
+    // create first overlay layer and note all boundary nodes at their cells
     for edge in edges {
         let s = edge.source;
         let t = edge.target;
         let source_id = partition_ids[s];
         let target_id = partition_ids[t];
-        // edges belong to the cell of their source
 
-        cells.entry(source_id).or_default().edges.push(edge);
-        if source_id != target_id {
-            // crossing edge
-            // sketch of two cells with a crossing directed edge
-            //  ..________   ________..
-            //           |   |
-            //         ~~s-->t~~          i.outgoing_nodes.push(t)
-            //    cell i |   | cell k     k.incoming_nodes.push(t)
-            //  .._______|   |_______..
+        // edges belong to the cell of their source, always
+        cells[0].entry(source_id).or_default().edges.push(edge);
 
-            // incoming and outgoing ids in source, target cells
-            cells.entry(source_id).or_default().outgoing_nodes.push(t);
-            cells.entry(target_id).or_default().incoming_nodes.push(t);
-        }
+        level_directory
+            .get_crossing_levels(s, t)
+            .iter()
+            .enumerate()
+            .for_each(|(index, level)| {
+                // TODO: is the level needed?
+                // crossing edge
+                // sketch of two cells with a crossing directed edge
+                //  ..________   ________..
+                //           |   |
+                //         ~~s-->t~~          i.outgoing_nodes.push(t)
+                //    cell i |   | cell k     k.incoming_nodes.push(t)
+                //  .._______|   |_______..
+
+                // incoming and outgoing ids in source, target cells
+                cells[index]
+                    .entry(source_id.parent_at_level(*level))
+                    .or_default()
+                    .outgoing_nodes
+                    .push(t);
+                cells[index]
+                    .entry(target_id.parent_at_level(*level))
+                    .or_default()
+                    .incoming_nodes
+                    .push(t);
+            });
     }
-    info!("created {} base cells", cells.len());
+    levels.iter().enumerate().for_each(|(index, level)| {
+        info!(
+            "[{:02}] created {} base cells on level {level}",
+            index,
+            cells[index].len()
+        );
+    });
 
-    // process cells
-    let matrices = cells
-        .iter()
-        .map(|(key, cell)| {
-            // println!("processing cell {}", key);
-            (key, cell.process())
+    let matrices = (0..levels.len())
+        .map(|index| {
+            // process cells on level i
+            let level_matrices: Vec<_> = cells[index]
+                .par_iter()
+                .map(|(key, cell)| (*key, cell.process()))
+                .collect();
+
+            // the number of matrices needs to equal the number of cells on a given level
+            debug_assert_eq!(level_matrices.len(), cells[index].len());
+
+            info!(
+                "[{:02}-{:02}] created {} matrices on",
+                index,
+                levels[index],
+                level_matrices.len(),
+            );
+
+            if index < levels.len() - 1 {
+                // no need to extract edges for the very last level
+                level_matrices.iter().for_each(|(key, cell)| {
+                    let parent = key.parent_at_level(levels[index + 1]);
+                    cells[index + 1]
+                        .entry(parent)
+                        .or_default()
+                        .edges
+                        .extend(cell.overlay_edges());
+                });
+            }
+            level_matrices
         })
         .collect_vec();
 
-    // if let Some(cell) = cells.get(&PartitionID::new(1978734)) {
-    //     cell.process();
-    // }
+    let sum: usize = matrices
+        .iter()
+        .map(|level_matrices| {
+            level_matrices.iter().fold(0, |acc, (_id, cell)| {
+                acc + 4
+                    * (1 + cell.incoming_nodes.len()
+                        + cell.outgoing_nodes.len()
+                        + cell.matrix.len())
+            })
+        })
+        .sum();
+    println!("bytes: {sum}");
 
-    info!("done processing {} base cells.", matrices.len());
+    let avg_incoming = matrices
+        .iter()
+        .map(|level_matrices| {
+            level_matrices
+                .iter()
+                .fold(0., |acc, (_, cell)| acc + cell.incoming_nodes.len() as f32)
+                / level_matrices.len() as f32
+        })
+        .collect_vec();
+    info!("avg_incoming: [{:?}]", avg_incoming.iter().format(", "));
 
-    // TODO: process matrix layers
+    let max_incoming = matrices
+        .iter()
+        .map(|level_matrices| {
+            level_matrices
+                .iter()
+                .max_by_key(|(_, cell)| cell.incoming_nodes.len())
+        })
+        .collect_vec();
+    let max_incoming = max_incoming
+        .iter()
+        .map(|elem| elem.unwrap().1.incoming_nodes.len())
+        .collect_vec();
+    info!("max_incoming: [{:?}]", max_incoming.iter().format(", "));
+    let min_incoming = matrices
+        .iter()
+        .map(|level_matrices| {
+            level_matrices
+                .iter()
+                .min_by_key(|(_, cell)| cell.incoming_nodes.len())
+        })
+        .collect_vec();
+    let min_incoming = min_incoming
+        .iter()
+        .map(|elem| elem.unwrap().1.incoming_nodes.len())
+        .collect_vec();
+    info!("min_incoming: [{:?}]", min_incoming.iter().format(", "));
 
+    let avg_outgoing = matrices
+        .iter()
+        .map(|level_matrices| {
+            level_matrices
+                .iter()
+                .fold(0., |acc, (_, cell)| acc + cell.outgoing_nodes.len() as f32)
+                / level_matrices.len() as f32
+        })
+        .collect_vec();
+    info!("avg_outgoing: [{:?}]", avg_outgoing.iter().format(", "));
+    let max_outgoing = matrices
+        .iter()
+        .map(|level_matrices| {
+            level_matrices
+                .iter()
+                .max_by_key(|(_, cell)| cell.outgoing_nodes.len())
+        })
+        .collect_vec();
+    let max_outgoing = max_outgoing
+        .iter()
+        .map(|elem| elem.unwrap().1.outgoing_nodes.len())
+        .collect_vec();
+    info!("max_outgoing: [{:?}]", max_outgoing.iter().format(", "));
+    let min_incoming = matrices
+        .iter()
+        .map(|level_matrices| {
+            level_matrices
+                .iter()
+                .min_by_key(|(_, cell)| cell.incoming_nodes.len())
+        })
+        .collect_vec();
+    let min_incoming = min_incoming
+        .iter()
+        .map(|elem| elem.unwrap().1.incoming_nodes.len())
+        .collect_vec();
+    info!("min_incoming: [{:?}]", min_incoming.iter().format(", "));
+
+    // TODO: sum up the size of the structures
     info!("done.");
-}
-
-fn serialize_convex_cell_hull_geojson(
-    hulls: &[(Vec<FPCoordinate>, BoundingBox, &PartitionID)],
-    filename: &str,
-) {
-    let file = BufWriter::new(File::create(filename).expect("output file cannot be opened"));
-    let mut writer = FeatureWriter::from_writer(file);
-    for (convex_hull, bbox, id) in hulls {
-        // map n + 1 points of the closed polygon into a format that is geojson compliant
-        let convex_hull = convex_hull
-            .iter()
-            .cycle()
-            .take(convex_hull.len() + 1)
-            .map(|c| {
-                // TODO: should this be implemented via the Into<> trait?
-                c.to_lon_lat_vec()
-            })
-            .collect_vec();
-
-        // serialize convex hull polygons as geojson
-        let geometry = Geometry::new(Value::Polygon(vec![convex_hull]));
-
-        writer
-            .write_feature(&Feature {
-                bbox: Some(bbox.into()),
-                geometry: Some(geometry),
-                id: Some(Id::String(id.to_string())),
-                // Features tbd
-                properties: None,
-                foreign_members: None,
-            })
-            .unwrap_or_else(|_| panic!("error writing feature: {id}"));
-    }
-    writer.finish().expect("error writing file");
-}
-
-fn serialize_boundary_geometry_geojson(coordinates: &[FPCoordinate], filename: &str) {
-    let file = BufWriter::new(File::create(filename).expect("output file cannot be opened"));
-    let mut writer = FeatureWriter::from_writer(file);
-    for coordinate in coordinates {
-        // serialize convex hull polygons as geojson
-        let geometry = Geometry::new(Value::Point(coordinate.to_lon_lat_vec()));
-
-        writer
-            .write_feature(&Feature {
-                bbox: None,
-                geometry: Some(geometry),
-                id: None,
-                // Features tbd
-                properties: None,
-                foreign_members: None,
-            })
-            .unwrap_or_else(|_| panic!("error writing feature: {}", coordinate));
-    }
-    writer.finish().expect("error writing file");
 }

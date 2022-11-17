@@ -7,8 +7,9 @@ use crate::{
     static_graph::StaticGraph,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BaseCell {
+    // TODO: experiment on thin_vec
     pub incoming_nodes: Vec<NodeID>,
     pub outgoing_nodes: Vec<NodeID>,
     pub edges: Vec<InputEdge<usize>>,
@@ -80,19 +81,20 @@ impl BaseCell {
             .into_iter()
             .collect_vec();
         // println!("3, graph: ({},{})", graph.number_of_nodes(), graph.number_of_edges());
-        for source in source_range {
-            // TODO: compute clique information by one-to-many or many-to-many
-            let _success = dijkstra.run(&graph, source, &target_range);
-            for target in &target_range {
-                let distance = dijkstra.distance(*target);
-                // println!("process {source} -> {target}");
-                debug!(
-                    "matrix[{}] distance({source},{target})={distance}",
-                    (source * self.outgoing_nodes.len() + target - self.incoming_nodes.len())
-                );
+        if !self.edges.is_empty() {
+            for source in source_range {
+                // compute clique information repeated one-to-many calls for each source
+                let _success = dijkstra.run(&graph, source, &target_range);
+                for target in &target_range {
+                    let distance = dijkstra.distance(*target);
+                    let target_index = target - self.incoming_nodes.len();
+                    debug!(
+                        "matrix[{}] distance({source},{target})={distance}",
+                        (source * self.outgoing_nodes.len() + target_index)
+                    );
 
-                matrix[source * self.outgoing_nodes.len() + target - self.incoming_nodes.len()] =
-                    distance;
+                    matrix[source * self.outgoing_nodes.len() + target_index] = distance;
+                }
             }
         }
         // println!("4");
@@ -106,11 +108,13 @@ impl BaseCell {
     }
 }
 
+#[derive(Clone)]
 pub struct MatrixCell {
-    incoming_nodes: Vec<NodeID>,
-    outgoing_nodes: Vec<NodeID>,
+    // TODO: experiment on thin_vec
+    pub incoming_nodes: Vec<NodeID>,
+    pub outgoing_nodes: Vec<NodeID>,
     // matrix of pairwise distances between boundary nodes
-    matrix: Vec<usize>,
+    pub matrix: Vec<usize>,
 }
 
 impl MatrixCell {
@@ -123,6 +127,31 @@ impl MatrixCell {
             .unwrap_or_else(|_| panic!("node {u} not found in node boundary"));
         // return the row of the matrix
         &self.matrix[index * self.incoming_nodes.len()..(index + 1) * self.outgoing_nodes.len()]
+    }
+
+    pub fn overlay_edges(&self) -> Vec<InputEdge<usize>> {
+        let mut result = Vec::new();
+        result.reserve(self.incoming_nodes.len() * self.outgoing_nodes.len());
+
+        // walk matrix to derive list of edges for the next level of processing
+        for i in 0..self.incoming_nodes.len() {
+            let source = self.incoming_nodes[i];
+            for j in 0..self.outgoing_nodes.len() {
+                let distance = self.matrix[i * j + i];
+                if distance != usize::MAX {
+                    let target = self.outgoing_nodes[j];
+                    let edge = InputEdge {
+                        source,
+                        target,
+                        data: distance,
+                    };
+                    // edge_count += 1;
+                    result.push(edge);
+                }
+            }
+        }
+
+        result
     }
 }
 

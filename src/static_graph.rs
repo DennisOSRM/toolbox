@@ -44,8 +44,9 @@ impl<T: Ord + Copy> StaticGraph<T> {
 
     pub fn new(mut input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>) -> Self {
         // sort input edges by source/target/data
-        // TODO(dl): sorting by source suffices to construct adjacency array
         input.sort();
+        // TODO(dl): sorting by source suffices to construct adjacency array
+        // input.sort_unstable_by_key(|edge| {edge.source()});
 
         Self::new_from_sorted_list(input)
     }
