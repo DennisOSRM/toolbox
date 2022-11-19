@@ -26,7 +26,6 @@ impl<T: Ord + Clone> Default for StaticGraph<T> {
         }
     }
 }
-// TODO: EdgeIterator StaticGraph::edge_iter()
 
 impl<T: Ord + Copy> StaticGraph<T> {
     // In time O(V+E) check that the following invariants hold:
@@ -44,9 +43,8 @@ impl<T: Ord + Copy> StaticGraph<T> {
 
     pub fn new(mut input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>) -> Self {
         // sort input edges by source/target/data
-        input.sort();
         // TODO(dl): sorting by source suffices to construct adjacency array
-        // input.sort_unstable_by_key(|edge| {edge.source()});
+        input.sort();
 
         Self::new_from_sorted_list(input)
     }

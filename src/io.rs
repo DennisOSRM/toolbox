@@ -38,8 +38,3 @@ pub fn read_vec_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> Vec
     let reader = BufReader::new(File::open(filename).unwrap());
     deserialize_from(reader).unwrap()
 }
-
-// pub fn read_coordinates(filename: &str) -> Vec<FPCoordinate> {
-//     let reader = BufReader::new(File::open(filename).unwrap());
-//     deserialize_from(reader).unwrap()
-// }
