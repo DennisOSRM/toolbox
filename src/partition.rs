@@ -1,6 +1,10 @@
 use core::cmp::max;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, hash::Hash};
+use std::{
+    fmt::Display,
+    hash::Hash,
+    ops::{BitAnd, BitOr},
+};
 
 /// represents the hiearchical partition id scheme. The root id has ID 1 and
 /// children are shifted to the left by one and plus 0/1. The parent child
@@ -109,6 +113,11 @@ impl PartitionID {
         }
         left
     }
+
+    pub fn extract_bit(&self, index: usize) -> bool {
+        let mask = 1 << index;
+        mask & self.0 > 0
+    }
 }
 
 impl Display for PartitionID {
@@ -127,6 +136,22 @@ impl core::fmt::Binary for PartitionID {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let val = self.0;
         core::fmt::Binary::fmt(&val, f) // delegate to u32's implementation
+    }
+}
+
+impl BitAnd for PartitionID {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
+}
+
+impl BitOr for PartitionID {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
     }
 }
 
@@ -219,7 +244,7 @@ mod tests {
         let id = PartitionID(1);
         let mut current = id;
         for i in 1..30 {
-            let mut id = id.clone();
+            let mut id = id;
             id.inplace_leftmost_descendant(i);
             assert_eq!(current.left_child(), id);
             current = current.left_child();
@@ -231,7 +256,7 @@ mod tests {
         let id = PartitionID(1);
         let mut current = id;
         for i in 1..30 {
-            let mut id = id.clone();
+            let mut id = id;
             id.inplace_rightmost_descendant(i);
             assert_eq!(current.right_child(), id);
             current = current.right_child();
@@ -242,7 +267,7 @@ mod tests {
     fn display() {
         for i in 0..100 {
             let id = PartitionID(i);
-            let string = format!("{}", id);
+            let string = format!("{id}");
             let recast_id = PartitionID(string.parse::<u32>().unwrap());
             assert_eq!(id, recast_id);
         }
@@ -252,7 +277,7 @@ mod tests {
     fn partial_eq() {
         for i in 0..100 {
             let id = PartitionID(i);
-            let string = format!("{}", id);
+            let string = format!("{id}");
             let recast_id = PartitionID(string.parse::<u32>().unwrap());
             assert_eq!(id, recast_id);
         }
@@ -310,5 +335,37 @@ mod tests {
         assert_eq!(a.lowest_common_ancestor(&b), b.lowest_common_ancestor(&a));
 
         assert_eq!(a.lowest_common_ancestor(&b), PartitionID::root());
+    }
+
+    #[test]
+    fn bitand() {
+        let a = PartitionID(0b1000);
+        let b = PartitionID(0b1001);
+        assert_eq!(PartitionID(0b1000), a & b);
+    }
+
+    #[test]
+    fn bitor() {
+        let a = PartitionID(0b1000);
+        let b = PartitionID(0b1001);
+        assert_eq!(PartitionID(0b1001), a | b);
+    }
+
+    #[test]
+    fn extract_bit() {
+        let a = PartitionID(0b1001);
+        assert!(a.extract_bit(0));
+        assert!(!a.extract_bit(1));
+        assert!(!a.extract_bit(2));
+        assert!(a.extract_bit(3));
+        assert!(!a.extract_bit(4));
+
+        let a = PartitionID(0b100000000100000001000);
+        // [0, 3, 7, 11, 15]
+        assert!(!a.extract_bit(0));
+        assert!(a.extract_bit(3));
+        assert!(!a.extract_bit(7));
+        assert!(a.extract_bit(11));
+        assert!(!a.extract_bit(15));
     }
 }
